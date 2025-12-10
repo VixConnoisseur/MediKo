@@ -1,14 +1,13 @@
+// vite.config.js
 import { defineConfig } from "vite";
 import { resolve } from "path";
 
 export default defineConfig({
-  root: "./assets",
-  base: "/assets/",
-  publicDir: "../public",
+  root: "./",
+  publicDir: "public",
   build: {
-    outDir: "../public/build",
+    outDir: "public/build",
     emptyOutDir: true,
-    manifest: true,
     rollupOptions: {
       input: {
         app: "./assets/js/app.js",
@@ -17,10 +16,7 @@ export default defineConfig({
     },
   },
   server: {
-    strictPort: true,
     port: 3000,
-    proxy: {
-      "^(?!/assets)": "http://localhost:8000",
-    },
+    open: "/",
   },
 });

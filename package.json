@@ -1,11 +1,11 @@
 {
-  "name": "mediko-healthcare",
+  "name": "mediko",
   "version": "1.0.0",
-  "description": "Healthcare Management System",
+  "description": "Mediko Healthcare System",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "watch": "vite build --watch"
   },
   "devDependencies": {
     "autoprefixer": "^10.4.16",
