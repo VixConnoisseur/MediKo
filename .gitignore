@@ -1,0 +1,53 @@
+# Environment files
+.env
+
+# Dependencies
+/vendor/
+/node_modules/
+
+# Build files
+/dist/
+/build/
+
+# Logs
+*.log
+
+# Cache
+/cache/
+
+# Session files
+/sessions/*
+!/sessions/.gitkeep
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Local development
+.htaccess
+
+# Composer
+composer.lock
+composer.phar
+
+# Node
+package-lock.json
+yarn.lock
+
+# Tailwind CSS
+*.css.map
+
+# Debug files
+*.log
+*.sql
