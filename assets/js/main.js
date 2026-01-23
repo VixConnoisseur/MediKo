@@ -1,7 +1,7 @@
 // Main JavaScript for MediKo
 
-// Mobile menu toggle
 document.addEventListener("DOMContentLoaded", function () {
+  // Mobile menu toggle
   const mobileMenuButton = document.getElementById("mobile-menu-button");
   const mobileMenu = document.getElementById("mobile-menu");
 
@@ -9,6 +9,24 @@ document.addEventListener("DOMContentLoaded", function () {
     mobileMenuButton.addEventListener("click", function () {
       mobileMenu.classList.toggle("hidden");
     });
+  }
+
+  // Update login form to use our new handler
+  const loginForm = document.getElementById("login-form");
+  if (loginForm) {
+    // Remove any existing submit handlers
+    loginForm.onsubmit = null;
+    const newForm = loginForm.cloneNode(true);
+    loginForm.parentNode.replaceChild(newForm, loginForm);
+
+    // Add our new handler
+    newForm.onsubmit =
+      window.handleLogin ||
+      function (e) {
+        e.preventDefault();
+        console.error("handleLogin function not found");
+        return false;
+      };
   }
 
   // Modal functionality
@@ -36,6 +54,8 @@ document.addEventListener("DOMContentLoaded", function () {
   window.togglePassword = function (inputId) {
     const input = document.getElementById(inputId);
     const icon = document.getElementById(`toggle-${inputId}`);
+
+    if (!input || !icon) return;
 
     if (input.type === "password") {
       input.type = "text";

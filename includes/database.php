@@ -8,22 +8,41 @@ class Database {
     private $connection;
     private $query;
     private static $instance = null;
+    private $pdo;
 
     /**
      * Constructor - creates a new database connection
      */
-    public function __construct() {
-        $this->connect(DB_HOST, DB_USER, DB_PASS, DB_NAME);
+    private function __construct() {
+        try {
+            $this->pdo = new PDO(
+                "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=utf8mb4",
+                DB_USER,
+                DB_PASS,
+                [
+                    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                    PDO::ATTR_EMULATE_PREPARES => false,
+                    PDO::ATTR_PERSISTENT => true
+                ]
+            );
+        } catch (PDOException $e) {
+            if (APP_DEBUG) {
+                die("Database connection failed: " . $e->getMessage());
+            } else {
+                die("Database connection failed. Please try again later.");
+            }
+        }
     }
 
-    /**
-     * Get singleton instance
-     */
     public static function getInstance() {
         if (self::$instance === null) {
             self::$instance = new self();
         }
         return self::$instance;
+    }
+    public function getPdo() {
+        return $this->pdo;
     }
 
     /**
@@ -51,26 +70,48 @@ class Database {
      */
     public function query($sql, $params = []) {
         try {
-            $this->query = $this->connection->prepare($sql);
-            $this->query->execute($params);
-            return $this;
+            $stmt = $this->pdo->prepare($sql);
+            
+            // Check if we're using named parameters
+            $isNamed = !empty($params) && is_string(key($params));
+            
+            // Bind parameters
+            foreach ($params as $key => $value) {
+                $param = $isNamed ? (':' . ltrim($key, ':')) : ($key + 1);
+                $paramType = is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR;
+                $stmt->bindValue($param, $value, $paramType);
+            }
+            
+            $stmt->execute();
+            return $stmt;
         } catch (PDOException $e) {
-            throw new Exception("Query failed: " . $e->getMessage());
+            error_log("Database error in query: " . $e->getMessage() . " | SQL: " . $sql);
+            throw $e;
         }
     }
 
     /**
      * Fetch all results
      */
-    public function fetchAll() {
-        return $this->query->fetchAll();
+    public function fetchAll($sql, $params = []) {
+        try {
+            return $this->query($sql, $params)->fetchAll();
+        } catch (PDOException $e) {
+            error_log("Database fetchAll error: " . $e->getMessage() . " | SQL: " . $sql);
+            throw $e;
+        }
     }
 
     /**
      * Fetch a single row
      */
-    public function fetch() {
-        return $this->query->fetch();
+    public function fetch($sql, $params = []) {
+        try {
+            return $this->query($sql, $params)->fetch();
+        } catch (PDOException $e) {
+            error_log("Database fetch error: " . $e->getMessage() . " | SQL: " . $sql);
+            throw $e;
+        }
     }
 
     /**
@@ -84,7 +125,7 @@ class Database {
      * Get last insert ID
      */
     public function lastInsertId() {
-        return $this->connection->lastInsertId();
+        return $this->pdo->lastInsertId();
     }
 
     /**
@@ -112,18 +153,13 @@ class Database {
      * Insert data into a table
      */
     public function insert($table, $data) {
-        $columns = implode(', ', array_keys($data));
-        $placeholders = ':' . implode(', :', array_keys($data));
+        $keys = array_keys($data);
+        $fields = '`' . implode('`, `', $keys) . '`';
+        $values = ':' . implode(', :', $keys);
         
-        $sql = "INSERT INTO {$table} ({$columns}) VALUES ({$placeholders})";
-        
-        try {
-            $stmt = $this->connection->prepare($sql);
-            $stmt->execute($data);
-            return $this->connection->lastInsertId();
-        } catch (PDOException $e) {
-            throw new Exception("Insert failed: " . $e->getMessage());
-        }
+        $sql = "INSERT INTO `$table` ($fields) VALUES ($values)";
+        $this->query($sql, $data);
+        return $this->pdo->lastInsertId();
     }
 
     /**
@@ -131,36 +167,37 @@ class Database {
      */
     public function update($table, $data, $where, $whereParams = []) {
         $set = [];
-        foreach (array_keys($data) as $key) {
-            $set[] = "{$key} = :{$key}";
-        }
-        $setClause = implode(', ', $set);
+        $setParams = [];
         
-        $sql = "UPDATE {$table} SET {$setClause} WHERE {$where}";
-        
-        try {
-            $stmt = $this->connection->prepare($sql);
-            $stmt->execute(array_merge($data, $whereParams));
-            return $stmt->rowCount();
-        } catch (PDOException $e) {
-            throw new Exception("Update failed: " . $e->getMessage());
+        // Handle SET clause with named parameters
+        foreach ($data as $key => $value) {
+            $paramName = 'set_' . $key;  // Prefix to avoid conflicts with WHERE params
+            $set[] = "`$key` = :$paramName";
+            $setParams[$paramName] = $value;
         }
+        
+        // Build the SQL query
+        $sql = "UPDATE `$table` SET " . implode(', ', $set);
+        
+        // Handle WHERE clause - check if it uses named or positional parameters
+        if (!empty($where)) {
+            $sql .= " WHERE $where";
+        }
+        
+        // Combine parameters (SET and WHERE)
+        $params = array_merge($setParams, $whereParams);
+        
+        return $this->query($sql, $params)->rowCount();
     }
 
     /**
      * Delete data from a table
      */
     public function delete($table, $where, $params = []) {
-        $sql = "DELETE FROM {$table} WHERE {$where}";
-        
-        try {
-            $stmt = $this->connection->prepare($sql);
-            $stmt->execute($params);
-            return $stmt->rowCount();
-        } catch (PDOException $e) {
-            throw new Exception("Delete failed: " . $e->getMessage());
-        }
+        $sql = "DELETE FROM `$table` WHERE $where";
+        return $this->query($sql, $params)->rowCount();
     }
+
 
     /**
      * Get a single record by ID
@@ -206,7 +243,11 @@ class Database {
      * Close the database connection
      */
     public function close() {
-        $this->connection = null;
+        $this->pdo = null;
+    }
+
+    public function prepare($sql) {
+        return $this->pdo->prepare($sql);
     }
 
     /**
@@ -217,5 +258,7 @@ class Database {
     /**
      * Prevent unserializing of the instance
      */
-    private function __wakeup() {}
+    public function __wakeup() {
+    // Prevent unserialization
+}
 }

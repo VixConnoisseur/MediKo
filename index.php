@@ -30,7 +30,6 @@ if (session_status() === PHP_SESSION_NONE) {
     <link rel="stylesheet" href="assets/css/style.css">
     <link rel="stylesheet" href="assets/css/custom.css">
     <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
-    <script src="https://kit.fontawesome.com/your-code-here.js" crossorigin="anonymous"></script>
     
     <!-- Custom Tailwind Config -->
     <script>
@@ -407,19 +406,28 @@ if (session_status() === PHP_SESSION_NONE) {
                 </button>
             </div>
             
-            <form id="login-form">
+            <?php if (isset($loginError)): ?>
+                <div class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                    <?php echo htmlspecialchars($loginError); ?>
+                </div>
+            <?php endif; ?>
+            
+            <form id="login-form" action="login_handler.php" method="POST" onsubmit="return handleLogin(event)">
+                <input type="hidden" name="action" value="login">
+                <input type="hidden" name="csrf_token" value="<?php echo (new Security(Database::getInstance()))->generateCsrfToken(); ?>">
+                
                 <div class="mb-4">
-                    <label for="login-email" class="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                    <input type="email" id="login-email" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent" placeholder="your@email.com" required>
+                    <label for="email" class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                    <input type="email" id="login-email" name="email" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent" placeholder="your@email.com" required>
                 </div>
                 
                 <div class="mb-6">
                     <div class="flex justify-between items-center mb-1">
-                        <label for="login-password" class="block text-sm font-medium text-gray-700">Password</label>
+                        <label for="password" class="block text-sm font-medium text-gray-700">Password</label>
                         <a href="#" class="text-sm text-primary hover:underline">Forgot password?</a>
                     </div>
                     <div class="relative">
-                        <input type="password" id="login-password" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent pr-10" placeholder="••••••••" required>
+                        <input type="password" id="login-password" name="password" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent pr-10" placeholder="••••••••" required>
                         <button type="button" onclick="togglePassword('login-password')" class="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600">
                             <i id="toggle-login-password" class="far fa-eye"></i>
                         </button>
@@ -427,8 +435,8 @@ if (session_status() === PHP_SESSION_NONE) {
                 </div>
                 
                 <div class="flex items-center mb-6">
-                    <input type="checkbox" id="remember-me" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded">
-                    <label for="remember-me" class="ml-2 block text-sm text-gray-700">
+                    <input type="checkbox" id="remember" name="remember" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded">
+                    <label for="remember" class="ml-2 block text-sm text-gray-700">
                         Remember me
                     </label>
                 </div>
@@ -529,6 +537,73 @@ if (session_status() === PHP_SESSION_NONE) {
     
     <script src="https://unpkg.com/aos@2.3.1/dist/aos.js"></script>
     <script>
+        // Handle login form submission
+        async function handleLogin(event) {
+            event.preventDefault();
+            
+            const form = event.target;
+            const formData = new FormData(form);
+            const submitButton = form.querySelector('button[type="submit"]');
+            
+            try {
+                // Disable the submit button to prevent multiple submissions
+                if (submitButton) {
+                    submitButton.disabled = true;
+                    submitButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Logging in...';
+                }
+                
+                const response = await fetch(form.action, {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Redirect to dashboard on successful login
+                    window.location.href = data.redirect || '/bsit3a_guasis/mediko/pages/admin/dashboard.php';
+                } else {
+                    // Show error message
+                    alert(data.message || 'Login failed. Please try again.');
+                    
+                    // If CSRF token is invalid, refresh the page to get a new one
+                    if (data.message && data.message.includes('CSRF')) {
+                        window.location.reload();
+                    }
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('An error occurred. Please try again.');
+            } finally {
+                // Re-enable the submit button
+                if (submitButton) {
+                    submitButton.disabled = false;
+                    submitButton.innerHTML = 'Log In';
+                }
+            }
+            
+            return false;
+        }
+        
+        // Toggle password visibility
+        function togglePassword(inputId) {
+            const input = document.getElementById(inputId);
+            const icon = document.getElementById(`toggle-${inputId}`);
+            
+            if (input.type === 'password') {
+                input.type = 'text';
+                icon.classList.remove('fa-eye');
+                icon.classList.add('fa-eye-slash');
+            } else {
+                input.type = 'password';
+                icon.classList.remove('fa-eye-slash');
+                icon.classList.add('fa-eye');
+            }
+        }
+
         // Initialize AOS
         document.addEventListener('DOMContentLoaded', function() {
             AOS.init({
@@ -537,15 +612,21 @@ if (session_status() === PHP_SESSION_NONE) {
                 once: true,
                 mirror: false
             });
+
+            // Remove any duplicate event listeners
+            const loginForm = document.getElementById('login-form');
+            if (loginForm) {
+                // Clone the form and replace it to remove all event listeners
+                const newForm = loginForm.cloneNode(true);
+                loginForm.parentNode.replaceChild(newForm, loginForm);
+                
+                // Add the submit event listener to the new form
+                newForm.addEventListener('submit', handleLogin);
+            }
         });
 
         // Form submission handlers
-        document.getElementById('login-form')?.addEventListener('submit', function(e) {
-            e.preventDefault();
-            // Add login logic here
-            alert('Login functionality will be implemented soon!');
-            closeModal('login-modal');
-        });
+        // Login form is now handled by the handleLogin function in the form's onsubmit attribute
 
         document.getElementById('signup-form')?.addEventListener('submit', function(e) {
             e.preventDefault();
@@ -580,6 +661,101 @@ if (session_status() === PHP_SESSION_NONE) {
                 }
             });
         });
+
+window.handleLogin = async function(e) {
+    e.preventDefault();
+    
+    const form = e.target;
+    const submitButton = form.querySelector('button[type="submit"]');
+    const originalButtonText = submitButton.innerHTML;
+    
+    try {
+        // Show loading state
+        submitButton.disabled = true;
+        submitButton.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Logging in...';
+        
+        const formData = new FormData(form);
+        
+        // Log form data being sent
+        console.log('Form data being sent:');
+        for (let [key, value] of formData.entries()) {
+            console.log(key, value);
+        }
+        
+        const response = await fetch(window.location.origin + '/bsit3a_guasis/mediko/login_handler.php', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        });
+        
+        // First, get the response as text
+        const responseText = await response.text();
+        console.log('Raw response:', responseText); // Log raw response
+        
+        // Try to parse as JSON
+        let data;
+        try {
+            data = JSON.parse(responseText);
+            console.log('Parsed response:', data);
+        } catch (e) {
+            console.error('Failed to parse JSON response. Response was:', responseText);
+            throw new Error('Invalid server response. Please try again later.');
+        }
+        
+        if (!response.ok) {
+            console.error('Server returned error status:', response.status, 'Message:', data.message || 'No error message');
+            throw new Error(data.message || `Server returned ${response.status}`);
+        }
+        
+        if (data.success) {
+            if (data.redirect) {
+                console.log('Login successful, redirecting to:', data.redirect);
+                window.location.href = data.redirect;
+            } else {
+                console.error('Login successful but no redirect URL provided');
+                throw new Error('Login successful but no redirect URL provided');
+            }
+        } else {
+            console.error('Login failed:', data.message || 'No error message');
+            throw new Error(data.message || 'Login failed. Please try again.');
+        }
+    } catch (error) {
+        console.error('Login error:', {
+            name: error.name,
+            message: error.message,
+            stack: error.stack
+        });
+        alert('Login failed: ' + (error.message || 'Please check your credentials and try again.'));
+    } finally {
+        // Reset button state
+        if (submitButton) {
+            submitButton.disabled = false;
+            submitButton.innerHTML = originalButtonText;
+        }
+    }
+    
+    return false;
+};
+
+// Add this to your existing JavaScript in index.php
+window.togglePassword = function(inputId) {
+    const input = document.getElementById(inputId);
+    const icon = document.getElementById(`toggle-${inputId}`);
+    
+    if (!input || !icon) return;
+    
+    if (input.type === 'password') {
+        input.type = 'text';
+        icon.classList.remove('fa-eye');
+        icon.classList.add('fa-eye-slash');
+    } else {
+        input.type = 'password';
+        icon.classList.remove('fa-eye-slash');
+        icon.classList.add('fa-eye');
+    }
+};
     </script>
 </body>
 </html>

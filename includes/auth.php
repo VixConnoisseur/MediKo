@@ -4,19 +4,22 @@
  * 
  * Handles user authentication, registration, and session management.
  */
+
+// Include required classes
+require_once __DIR__ . '/Security.php';
+
 class Auth {
     private $db;
+    private $security;
     private $sessionName = 'mediko_auth';
     private $rememberMeExpiry = 2592000; // 30 days in seconds
+    private $lastError = '';
 
     public function __construct($db) {
         $this->db = $db;
+        $this->security = new Security($db);
         
-        // Start session if not already started
-        if (session_status() === PHP_SESSION_NONE) {
-            session_start();
-        }
-        
+        // Don't start session here - it will be handled by config.php
         // Auto-login from remember me cookie if needed
         if (!$this->isLoggedIn() && isset($_COOKIE['remember_token'])) {
             $this->loginWithRememberToken($_COOKIE['remember_token']);
@@ -46,8 +49,8 @@ class Auth {
             throw new Exception("Email already registered.");
         }
         
-        // Hash password
-        $hashedPassword = password_hash($userData['password'], PASSWORD_DEFAULT);
+        // Hash password using security class
+        $hashedPassword = $this->security->hashPassword($userData['password']);
         
         // Prepare user data
         $user = [
@@ -99,50 +102,96 @@ class Auth {
     }
     
     /**
-     * Login user
+     * Regenerate session ID and update session data
      */
-    public function login($email, $password, $rememberMe = false) {
-        // Validate input
-        if (empty($email) || empty($password)) {
-            throw new Exception("Email and password are required.");
-        }
+    private function regenerateSession($user) {
+        // Regenerate session ID to prevent session fixation
+        session_regenerate_id(true);
         
-        // Get user by email
-        $user = $this->getUserByEmail($email);
-        
-        // Check if user exists and is active
-        if (!$user || !$user['is_active']) {
-            throw new Exception("Invalid credentials or account not active.");
-        }
-        
-        // Verify password
-        if (!password_verify($password, $user['password'])) {
-            // Log failed login attempt
-            $this->logLoginAttempt($user['id'], false);
-            throw new Exception("Invalid credentials.");
-        }
-        
-        // Check if account is locked due to too many failed attempts
-        if ($this->isAccountLocked($user['id'])) {
-            throw new Exception("Account locked due to too many failed login attempts. Please try again later.");
-        }
-        
-        // Update last login
-        $this->updateLastLogin($user['id']);
-        
-        // Set session
+        // Set session data
         $this->setUserSession($user);
         
-        // Set remember me cookie if requested
-        if ($rememberMe) {
-            $this->setRememberMeCookie($user['id']);
-        }
-        
-        // Log successful login
-        $this->logLoginAttempt($user['id'], true);
-        
-        return true;
+        // Update last activity time
+        $_SESSION[$this->sessionName]['last_activity'] = time();
     }
+    
+    /**
+     * Login user with security checks
+     */
+    public function login($email, $password, $rememberMe = false, $csrfToken = null) {
+        try {
+            // Validate CSRF token if provided
+            if ($csrfToken !== null) {
+                $this->security->verifyCsrfToken($csrfToken);
+            }
+            
+            // Check login attempts
+            $this->security->checkLoginAttempts($email);
+            
+            // Validate input
+            if (empty($email) || empty($password)) {
+                $this->security->recordLoginAttempt($email);
+                throw new Exception('Email and password are required.');
+            }
+            
+            // Get user by email
+            $user = $this->getUserByEmail($email);
+            
+            // Check if user exists and is active
+            if (!$user) {
+                $this->security->recordLoginAttempt($email);
+                throw new Exception('Invalid email or password.');
+            }
+            
+            if (!$user['is_active']) {
+                throw new Exception('Your account is inactive. Please contact support.');
+            }
+            
+            // Verify password
+            if (!password_verify($password, $user['password'])) {
+                $this->security->recordLoginAttempt($email);
+                throw new Exception('Invalid email or password.');
+            }
+            
+            // Check if password needs rehashing
+            if ($this->security->needsRehash($user['password'])) {
+                $newHash = $this->security->hashPassword($password);
+                $this->db->update('users', 
+                    ['password' => $newHash],
+                    'id = :id',
+                    ['id' => $user['id']]
+                );
+            }
+            
+            // Regenerate session for security
+            $this->regenerateSession($user);
+            
+            // Update last login
+            $this->updateLastLogin($user['id']);
+            
+            // Handle remember me
+            if ($rememberMe) {
+                $this->setRememberMe($user['id']);
+            }
+            
+            // Record successful login
+            $this->security->recordLoginAttempt($email, true);
+            
+            // Log successful login
+            $this->logLoginAttempt($user['id'], true);
+            
+            return true;
+        } catch (Exception $e) {
+            $this->lastError = $e->getMessage();
+            error_log("Login error: " . $this->lastError);
+            return false;
+        }
+    }
+
+    public function getError() {
+        return $this->lastError;
+    }
+    
     
     /**
      * Logout user
@@ -171,6 +220,8 @@ class Auth {
         
         return true;
     }
+
+    
     
     /**
      * Check if user is logged in
@@ -179,17 +230,24 @@ class Auth {
         return isset($_SESSION[$this->sessionName]['user_id']);
     }
     
-    /**
-     * Get current user
-     */
     public function getCurrentUser() {
-        if (!$this->isLoggedIn()) {
-            return null;
-        }
-        
-        $userId = $_SESSION[$this->sessionName]['user_id'];
-        return $this->getUserById($userId);
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
     }
+    
+    if (isset($_SESSION[$this->sessionName]['user_id'])) {
+        return $this->getUserById($_SESSION[$this->sessionName]['user_id']);
+    }
+    
+    return null;
+}
+
+/**
+ * Get the session name
+ */
+public function getSessionName() {
+    return $this->sessionName;
+}
     
     /**
      * Check if current user has a specific role
@@ -239,25 +297,20 @@ class Auth {
      */
     public function resetPassword($token, $newPassword) {
         // Find user with valid token
-        $user = $this->db->query(
-            "SELECT * FROM users WHERE reset_token = :token AND reset_expires > NOW() LIMIT 1",
-            ['token' => $token]
-        )->fetch();
+        $stmt = $this->db->query(
+            "SELECT * FROM users WHERE reset_token = ? AND reset_expires > NOW() LIMIT 1",
+            [$token]
+        );
+        $user = $stmt->fetch();
         
         if (!$user) {
-            throw new Exception("Invalid or expired token.");
+            throw new Exception('Invalid or expired reset token.');
         }
         
-        // Update password
-        $hashedPassword = password_hash($newPassword, PASSWORD_DEFAULT);
-        $this->db->update('users', 
-            [
-                'password' => $hashedPassword,
-                'reset_token' => null,
-                'reset_expires' => null
-            ],
-            'id = :id',
-            ['id' => $user['id']]
+        // Update password and clear reset token
+        $this->db->query(
+            "UPDATE users SET password = ?, reset_token = NULL, reset_expires = NULL WHERE id = ?",
+            [$this->security->hashPassword($newPassword), $user['id']]
         );
         
         return true;
@@ -267,23 +320,20 @@ class Auth {
      * Verify email with token
      */
     public function verifyEmail($token) {
-        $user = $this->db->query(
-            "SELECT * FROM users WHERE verification_token = :token LIMIT 1",
-            ['token' => $token]
-        )->fetch();
+        $stmt = $this->db->query(
+            "SELECT * FROM users WHERE verification_token = ? LIMIT 1",
+            [$token]
+        );
+        $user = $stmt->fetch();
         
         if (!$user) {
             throw new Exception("Invalid verification token.");
         }
         
         // Mark email as verified
-        $this->db->update('users', 
-            [
-                'email_verified_at' => date('Y-m-d H:i:s'),
-                'verification_token' => null
-            ],
-            'id = :id',
-            ['id' => $user['id']]
+        $this->db->query(
+            "UPDATE users SET email_verified_at = ?, verification_token = NULL WHERE id = ?",
+            [date('Y-m-d H:i:s'), $user['id']]
         );
         
         return true;
@@ -292,17 +342,19 @@ class Auth {
     // ===== PRIVATE METHODS =====
     
     private function getUserByEmail($email) {
-        return $this->db->query(
-            "SELECT * FROM users WHERE email = :email LIMIT 1",
-            ['email' => $email]
-        )->fetch();
+        $stmt = $this->db->query(
+            "SELECT * FROM users WHERE email = ? LIMIT 1",
+            [$email]
+        );
+        return $stmt->fetch();
     }
     
     private function getUserById($id) {
-        return $this->db->query(
-            "SELECT * FROM users WHERE id = :id LIMIT 1",
-            ['id' => $id]
-        )->fetch();
+        $stmt = $this->db->query(
+            "SELECT * FROM users WHERE id = ? LIMIT 1",
+            [$id]
+        );
+        return $stmt->fetch();
     }
     
     private function setUserSession($user) {
@@ -315,6 +367,40 @@ class Auth {
         ];
     }
     
+    /**
+     * Set remember me cookie and store token in database
+     */
+    private function setRememberMe($userId) {
+        // Generate a random token
+        $token = bin2hex(random_bytes(32));
+        $expires = time() + $this->rememberMeExpiry;
+        
+        // Store hashed token in database
+        $this->db->insert('remember_tokens', [
+            'user_id' => $userId,
+            'token' => password_hash($token, PASSWORD_DEFAULT),
+            'expires_at' => date('Y-m-d H:i:s', $expires),
+            'created_at' => date('Y-m-d H:i:s')
+        ]);
+        
+        // Set cookie
+        setcookie(
+            'remember_token',
+            $token,
+            [
+                'expires' => $expires,
+                'path' => '/',
+                'domain' => '',
+                'secure' => isset($_SERVER['HTTPS']),
+                'httponly' => true,
+                'samesite' => 'Lax'
+            ]
+        );
+    }
+    
+    /**
+     * Set remember me cookie with token
+     */
     private function setRememberMeCookie($userId) {
         // Generate a random token
         $token = bin2hex(random_bytes(32));
@@ -334,10 +420,11 @@ class Auth {
     
     private function loginWithRememberToken($token) {
         // Find valid token
-        $tokenRecord = $this->db->query(
-            "SELECT * FROM remember_tokens WHERE token = :token AND expires_at > NOW() LIMIT 1",
-            ['token' => $token]
-        )->fetch();
+        $stmt = $this->db->query(
+            "SELECT * FROM remember_tokens WHERE token = ? AND expires_at > NOW() LIMIT 1",
+            [$token]
+        );
+        $tokenRecord = $stmt->fetch();
         
         if ($tokenRecord) {
             $user = $this->getUserById($tokenRecord['user_id']);
@@ -346,10 +433,9 @@ class Auth {
                 
                 // Update token expiration
                 $newExpiry = time() + $this->rememberMeExpiry;
-                $this->db->update('remember_tokens', 
-                    ['expires_at' => date('Y-m-d H:i:s', $newExpiry)],
-                    'id = :id',
-                    ['id' => $tokenRecord['id']]
+                $this->db->query(
+                    "UPDATE remember_tokens SET expires_at = ? WHERE id = ?",
+                    [date('Y-m-d H:i:s', $newExpiry), $tokenRecord['id']]
                 );
                 
                 setcookie('remember_token', $token, $newExpiry, '/', '', false, true);
@@ -364,40 +450,68 @@ class Auth {
     
     private function deleteRememberToken($token) {
         $this->db->query(
-            "DELETE FROM remember_tokens WHERE token = :token",
-            ['token' => $token]
+            "DELETE FROM remember_tokens WHERE token = ?",
+            [$token]
         );
     }
     
     private function updateLastLogin($userId) {
-        $this->db->update('users', 
-            ['last_login' => date('Y-m-d H:i:s')],
-            'id = :id',
-            ['id' => $userId]
+        // Update last login time
+        $this->db->query(
+            "UPDATE users SET last_login = ? WHERE id = ?",
+            [date('Y-m-d H:i:s'), $userId]
         );
-    }
-    
-    private function logLoginAttempt($userId, $success) {
-        $this->db->insert('login_attempts', [
-            'user_id' => $userId,
-            'ip_address' => $_SERVER['REMOTE_ADDR'],
-            'user_agent' => $_SERVER['HTTP_USER_AGENT'],
-            'success' => $success ? 1 : 0,
-            'created_at' => date('Y-m-d H:i:s')
-        ]);
-    }
-    
-    private function isAccountLocked($userId) {
-        // Check for too many failed attempts in the last 15 minutes
-        $result = $this->db->query(
-            "SELECT COUNT(*) as attempts 
-             FROM login_attempts 
-             WHERE user_id = :user_id 
-             AND success = 0 
-             AND created_at > DATE_SUB(NOW(), INTERVAL 15 MINUTE)",
-            ['user_id' => $userId]
-        )->fetch();
         
-        return $result['attempts'] >= 5; // Lock after 5 failed attempts
+        // Reset login attempts for this user
+        $this->db->query(
+            "DELETE FROM login_attempts WHERE user_id = ?",
+            [$userId]
+        );
+        
+        return true;
+    }
+    
+    /**
+     * Log a login attempt
+     * 
+     * @param int $userId The user ID
+     * @param bool $success Whether the login was successful
+     * @return bool True on success, false on failure
+     */
+    public function logLoginAttempt($userId, $success) {
+        try {
+            return (bool)$this->db->insert('login_attempts', [
+                'user_id' => $userId,
+                'email' => $this->getUserById($userId)['email'] ?? 'unknown',
+                'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown',
+                'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+                'time' => time(),
+                'success' => $success ? 1 : 0
+            ]);
+        } catch (Exception $e) {
+            error_log("Failed to log login attempt: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Check if account is locked due to too many failed login attempts
+     * 
+     * @param string $email User's email address
+     * @return bool True if account is locked, false otherwise
+     */
+    private function isAccountLocked($email) {
+        $time = time() - 900; // 15 minutes ago
+        
+        // Count failed attempts in the last 15 minutes
+        $attempts = $this->db->select(
+            "SELECT COUNT(*) as count FROM login_attempts 
+             WHERE email = :email 
+             AND success = 0 
+             AND time > :time",
+            ['email' => $email, 'time' => $time]
+        );
+        
+        return $attempts && $attempts[0]['count'] >= 5; // Lock after 5 failed attempts
     }
 }
