@@ -1,11 +1,6 @@
 <?php
 // Include configuration first
 require_once __DIR__ . '/includes/config.php';
-
-// Then start the session
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -28,7 +23,6 @@ if (session_status() === PHP_SESSION_NONE) {
     
     <!-- Custom CSS -->
     <link rel="stylesheet" href="assets/css/style.css">
-    <link rel="stylesheet" href="assets/css/custom.css">
     <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
     
     <!-- Custom Tailwind Config -->
@@ -414,7 +408,7 @@ if (session_status() === PHP_SESSION_NONE) {
             
             <form id="login-form" action="login_handler.php" method="POST" onsubmit="return handleLogin(event)">
                 <input type="hidden" name="action" value="login">
-                <input type="hidden" name="csrf_token" value="<?php echo (new Security(Database::getInstance()))->generateCsrfToken(); ?>">
+                <input type="hidden" name="_token" value="<?php echo (new Security(Database::getInstance()))->generateCsrfToken(); ?>">
                 
                 <div class="mb-4">
                     <label for="email" class="block text-sm font-medium text-gray-700 mb-1">Email</label>

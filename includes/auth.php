@@ -90,8 +90,6 @@ class Auth {
             // Commit transaction
             $this->db->commit();
             
-            // Send verification email (in production)
-            // $this->sendVerificationEmail($user['email'], $user['verification_token']);
             
             return $userId;
         } catch (Exception $e) {

@@ -49,33 +49,6 @@ function asset($path) {
 }
 
 /**
- * Generate a CSRF token and store it in the session
- */
-function csrf_token() {
-    if (empty($_SESSION['csrf_token'])) {
-        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-    }
-    return $_SESSION['csrf_token'];
-}
-
-/**
- * Verify CSRF token
- */
-function verify_csrf_token($token) {
-    if (empty($_SESSION['csrf_token']) || empty($token) || !hash_equals($_SESSION['csrf_token'], $token)) {
-        return false;
-    }
-    return true;
-}
-
-/**
- * Generate a CSRF token input field
- */
-function csrf_field() {
-    return '<input type="hidden" name="csrf_token" value="' . csrf_token() . '">';
-}
-
-/**
  * Get the current date and time in MySQL format
  */
 function now() {
@@ -242,58 +215,6 @@ function first_error($errors) {
         return '';
     }
     return reset($errors);
-}
-
-/**
- * Flash a message to the session
- */
-function flash($key, $message = null) {
-    if ($message === null) {
-        $message = $_SESSION['flash'][$key] ?? null;
-        unset($_SESSION['flash'][$key]);
-        return $message;
-    }
-    
-    $_SESSION['flash'][$key] = $message;
-}
-
-/**
- * Check if a flash message exists
- */
-function has_flash($key) {
-    return !empty($_SESSION['flash'][$key]);
-}
-
-/**
- * Get all flash messages
- */
-function all_flash() {
-    $messages = $_SESSION['flash'] ?? [];
-    unset($_SESSION['flash']);
-    return $messages;
-}
-
-/**
- * Get old input data
- */
-function old($key, $default = '') {
-    return $_SESSION['old'][$key] ?? $default;
-}
-
-/**
- * Set old input data
- */
-function set_old_input() {
-    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        $_SESSION['old'] = $_POST;
-    }
-}
-
-/**
- * Clear old input data
- */
-function clear_old_input() {
-    unset($_SESSION['old']);
 }
 
 /**
@@ -500,9 +421,6 @@ function authorize($permission, $redirect = '/') {
     global $rbac;
     return $rbac->requirePermission($permission, $redirect);
 }
-
-// Initialize old input handling
-set_old_input();
 
 // Register the autoloader for classes in the MediKo namespace
 spl_autoload_register(function ($class) {

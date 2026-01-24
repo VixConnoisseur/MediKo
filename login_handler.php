@@ -32,7 +32,7 @@ try {
     $email = filter_input(INPUT_POST, 'email', FILTER_VALIDATE_EMAIL);
     $password = $_POST['password'] ?? '';
     $remember = isset($_POST['remember']) && $_POST['remember'] === 'on';
-    $csrfToken = $_POST['csrf_token'] ?? '';
+    $csrfToken = $_POST['_token'] ?? '';
 
     // Debug log
     error_log("Login attempt - Email: " . $email . ", Remember: " . ($remember ? 'Yes' : 'No'));
@@ -85,7 +85,7 @@ try {
                 'success' => true,
                 'message' => 'Login successful',
                 'redirect' => $redirectUrl,
-                'csrf_token' => $security->generateCsrfToken() // Generate new CSRF token for next request
+                '_token' => $security->generateCsrfToken() // Generate new CSRF token for next request
             ];
 
             error_log("Login successful for user: " . $email . ", role: " . $user['role']);

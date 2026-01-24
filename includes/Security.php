@@ -86,17 +86,17 @@ class Security {
      * Generate and store CSRF token
      */
     public function generateCsrfToken() {
-        if (empty($_SESSION['csrf_token'])) {
-            $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+        if (empty($_SESSION['_token'])) {
+            $_SESSION['_token'] = bin2hex(random_bytes(32));
         }
-        return $_SESSION['csrf_token'];
+        return $_SESSION['_token'];
     }
     
     /**
      * Verify CSRF token
      */
     public function verifyCsrfToken($token) {
-        if (empty($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $token)) {
+        if (empty($_SESSION['_token']) || !hash_equals($_SESSION['_token'], $token)) {
             throw new Exception('Invalid CSRF token');
         }
         return true;

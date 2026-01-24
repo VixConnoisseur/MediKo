@@ -32,17 +32,8 @@ if (!file_exists(UPLOADS_PATH) && is_writable(dirname(UPLOADS_PATH))) {
     mkdir(UPLOADS_PATH, 0755, true);
 }
 
-// Session Configuration
-if (session_status() === PHP_SESSION_NONE) {
-    // Session settings must be set before session_start()
-    ini_set('session.cookie_httponly', 1);
-    ini_set('session.use_only_cookies', 1);
-    ini_set('session.cookie_secure', isset($_SERVER['HTTPS']));
-    ini_set('session.cookie_samesite', 'Lax');
-    
-    // Start the session
-    session_start();
-}
+// Include session management
+require_once 'session.php';
 
 // Include required files
 require_once 'Database.php';
